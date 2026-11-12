@@ -280,6 +280,11 @@ void doors_set_open_now(int door, int open) {
 	}
 }
 
+void doors_set_swing(int door, float seconds) {
+	if (door >= 0 && door < door_count && seconds > 0.0f)
+		doors[door].swing_s = seconds;
+}
+
 void doors_set_open(int door, int open) {
 	if (door >= 0 && door < door_count)
 		doors[door].target = open ? 1.0f : 0.0f;

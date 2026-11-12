@@ -599,6 +599,8 @@ class ModelConverter:
         try:
             nif = NIF(find(self.mesh_archives, "meshes\\" + model_path))
             pose = nif.sequence_end_pose(sequence)  # (a sarcophagus's lid: "openEnd", off and over)
+            if not pose and sequence == "openEnd":  # (an upright one's lid: its behaviour's alone - Skuldafn's secret way)
+                pose = nif.lone_transform_end()
             if pose:
                 shapes, owners = nif.shapes_by_node(list(pose.keys()))
                 name = model_pack_name(model_path)

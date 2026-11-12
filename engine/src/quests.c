@@ -30,6 +30,7 @@
 #include "lighting.h"
 #include "gamelog.h"
 #include "interior.h"
+#include "objects.h"
 #include "intro.h"
 #include "items.h"
 #include "perks.h"
@@ -739,6 +740,7 @@ static void irileth_fights(float dt, const float feet[3]) {
 #define FLOOR_WORD_S 5.0f
 #define HH_CENTRE_M 3.5f // (this near the hall's centre - Skyrim's meditation spot: the trial begins)
 #define FLOOR_WORD_AHEAD_M 1.4f // (the word on the floor this far before you, toward the one who shouted it)
+#define SWITCH_USTENGRAV 3 // (converter/esm.py SWITCHES_INSIDE: MQ105EnableDungeonMarker)
 #define HORN_NEAR_M 5.0f  // (at the horn place in Ustengrav: the note)
 #define BLADE_WAIT_M 150.0f // (this near Kynesgrove mound: Delphine waiting on the hill)
 #define BLADE_MEET_M 8.0f   // ... this near her, or
@@ -2281,6 +2283,10 @@ void quests_update(float dt, const float feet[3], int interior, int souls) {
 		if (guard) // (her men stay at the tower: they'd followed you on to High Hrothgar)
 			creatures_dismiss_allies(guard);
 	}
+	// The world switches the main quest's stages throw (converter/esm.py SWITCHES_INSIDE): Ustengrav's
+	// cave-in gone once the Horn's asked for (MQ105's fragment 42) - kept in step with the stage, so a
+	// save from before this and the saved switch bits can't disagree
+	objects_set_switch(SWITCH_USTENGRAV, stage[Q_HORN] >= 10);
 	horn_update(dt, feet, interior);
 	blade_update(dt, feet, interior, souls);
 	di_update(feet, interior);

@@ -71,6 +71,9 @@ static const float OPEN_CARDS[4][2] = {{3.5f, 7.6f}, {9.4f, 12.6f}, {21.4f, 25.6
 #define ALDUIN_SPEED 17.0f
 #define ALDUIN_RING_M 45.0f    // Alduin between his packages: circling Helgen this far out...
 #define ALDUIN_HEIGHT_M 26.0f  // ...this high
+#define ALDUIN_WING_M 7.0f     // (his wings' reach either side: what he clears)
+#define ALDUIN_CLEAR_M 6.0f    // ...by this much
+#define ALDUIN_CLIMB_MS 14.0f  // (rising over it)
 #define BREATH_EVERY_S 0.45f
 #define ALDUIN_BODY_UP_M 2.5f  // (perched: his body's middle this far over his feet - the view's on it, not his feet)
 #define HEAD_REST_M 1.55f      // (a standing body's head this far over its feet)
@@ -679,6 +682,39 @@ static void alduin_package(const Action *a) {
 	}
 }
 
+// The top of what's built under (x, z) - towers, roofs, walls - from the collision near you (-1e9: none)
+static float built_top(float x, float z, float y) {
+	float top = -1e9f;
+	static const float off[5][2] = {{0, 0}, {ALDUIN_WING_M, 0}, {-ALDUIN_WING_M, 0}, {0, ALDUIN_WING_M}, {0, -ALDUIN_WING_M}};
+	for (int k = 0; k < 5; k++) {
+		const float a[3] = {x + off[k][0], y + 60.0f, z + off[k][1]}, b[3] = {x + off[k][0], y - 40.0f, z + off[k][1]};
+		const float t = collision_ray(a, b);
+		if (t < 1.0f)
+			top = fmaxf(top, a[1] + (b[1] - a[1]) * t);
+	}
+	return top;
+}
+
+// Flying, he goes over what's built, never through it: Skyrim's markers are joined here by straight lines
+// and the circle round the town is a fixed height, and he went through Helgen's tower before the Haming
+// scene (the round-6 video at 13:2x, the tester's at 9:11). Not when coming down to land or hover
+static void alduin_clear_buildings(float dt, int landing) {
+	if (landing)
+		return;
+	const float ahead[3] = {al.pos[0] + al.dir[0] * ALDUIN_SPEED, al.pos[1], al.pos[2] + al.dir[2] * ALDUIN_SPEED};
+	const float top = fmaxf(built_top(al.pos[0], al.pos[2], al.pos[1]), built_top(ahead[0], ahead[2], al.pos[1]));
+	const float floor_y = top + ALDUIN_CLEAR_M;
+	static int lifting;
+	if (al.pos[1] < floor_y) {
+		if (!lifting)
+			game_log("opening: Alduin over a building at %.0f %.0f (%.1f m to rise)", al.pos[0], al.pos[2], floor_y - al.pos[1]);
+		lifting = 1;
+		al.pos[1] = fminf(floor_y, al.pos[1] + ALDUIN_CLIMB_MS * dt);
+	} else {
+		lifting = 0;
+	}
+}
+
 static void alduin_update(float dt, const float player[3]) {
 	if (al.beast < 0)
 		return;
@@ -688,12 +724,14 @@ static void alduin_update(float dt, const float player[3]) {
 		const Marker *c = marker("centermarkerhelgen");
 		const float ctr[3] = {c ? c->pos[0] : player[0], c ? c->pos[1] : player[1], c ? c->pos[2] : player[2]};
 		al.angle += ALDUIN_SPEED / ALDUIN_RING_M * dt;
-		const float want[3] = {ctr[0] + cosf(al.angle) * ALDUIN_RING_M, ctr[1] + ALDUIN_HEIGHT_M,
-		                       ctr[2] + sinf(al.angle) * ALDUIN_RING_M};
+		float want[3] = {ctr[0] + cosf(al.angle) * ALDUIN_RING_M, ctr[1] + ALDUIN_HEIGHT_M,
+		                 ctr[2] + sinf(al.angle) * ALDUIN_RING_M};
+		want[1] = fmaxf(want[1], fmaxf(built_top(want[0], want[2], want[1]), built_top(al.pos[0], al.pos[2], al.pos[1])) + ALDUIN_CLEAR_M);
 		for (int k = 0; k < 3; k++)
 			al.pos[k] += (want[k] - al.pos[k]) * fminf(1.0f, dt * 1.5f);
 		const float tx = -sinf(al.angle), tz = cosf(al.angle);
 		al.heading = atan2f(-tx, -tz);
+		al.dir[0] = tx, al.dir[1] = 0.0f, al.dir[2] = tz;
 		clip = "glide_l";
 	} else if (al.mode == AL_PATH) {
 		const float *to = al.path[al.i];
@@ -746,6 +784,7 @@ static void alduin_update(float dt, const float player[3]) {
 			}
 		}
 		clip = last && al.angle < 0.0f && d < 18.0f ? "hover" : "glide";
+		alduin_clear_buildings(dt, last && al.angle < 0.0f && d < 30.0f);
 	} else { // (perched, on the ground, or hovering: facing his breath's target)
 		const float dx = al.aim[0] - al.pos[0], dz = al.aim[2] - al.pos[2];
 		if (hypotf(dx, dz) > 0.5f)

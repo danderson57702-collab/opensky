@@ -2858,7 +2858,8 @@ static void draugr_wake(int i) {
 	} else {
 		c->state = CHASE;
 	}
-	if (lying && (how == 0 || how == 3)) // (in a sarcophagus: its lid pushed off as it comes up)
+	if (lying && (how == 0 || how == 1 || how == 3)) // (in a sarcophagus: its lid pushed off as it comes up; an upright one's
+	                                                 //  falls before it - a secret way on behind some: Skuldafn's)
 		activators_open_lids(c->pos, 1.6f);
 	game_log("creatures: %s rises (%s, %.1f s)", k->title, lying ? WAIT[how][1] : "standing", rise);
 	c->shout_cd = 2.0f + frand() * 2.0f;
@@ -2906,6 +2907,8 @@ static void hurt(int i, float damage, int stagger) {
 	if ((k->flags & F_GUARD) && blame && !c->ally && c->health <= 0.0f) // (... killed by you: murder, if someone saw)
 		killed_hold = k->hold, memcpy(killed_at, c->pos, sizeof(killed_at));
 	if (c->health <= 0.0f) { // (knocked down already: it stays down)
+		if (c->state == AMBUSH && (spawns[c->spawn].ambush == 6 || spawns[c->spawn].ambush == 7 || spawns[c->spawn].ambush == 9)) // (killed still in its sarcophagus: the lid goes all
+			activators_open_lids(c->pos, 1.6f);              //  the same - some are a secret way on: Skuldafn's)
 		c->fall = c->state == KNOCKED ? c->fall : 0.0f;
 		c->health = 0.0f, c->state = DEAD, c->clip[0] = 0, c->clip_t = 0.0f;
 		spawns[c->spawn].dead = 1, spawns[c->spawn].dead_at = lighting_game_hours();

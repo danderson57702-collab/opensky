@@ -11,6 +11,7 @@
 #include "gamelog.h"
 #include "items.h"
 #include "sfx.h"
+#include "shouts.h"
 #include "traps.h"
 #include "ui.h"
 #include "gametext.h"
@@ -21,7 +22,17 @@
 #define WEB_HOLDS_M 2.5f // (a web and the one caught in it)
 #define DART_DAMAGE 15.0f // a failed puzzle's darts (Skyrim's dart traps: about this at the start)
 
-enum { ACT_PILLAR = 1, ACT_LEVER, ACT_PUZZLE_LEVER, ACT_GATE, ACT_BRIDGE, ACT_KEYHOLE, ACT_CLAWBASE, ACT_WEB };
+enum { ACT_PILLAR = 1, ACT_LEVER, ACT_PUZZLE_LEVER, ACT_GATE, ACT_BRIDGE, ACT_KEYHOLE, ACT_CLAWBASE, ACT_WEB, ACT_STONE, ACT_OPENER };
+// Ustengrav's Whirlwind Sprint puzzle (converter/interiors.py ACT_STONE): a dragon stone holds its gate
+// open while you stand on it; stepped off, the gate shuts after STONE_CLOSE_S (dunUstenPuzGateScript's
+// CloseGate) and your shout is ready again (resetsShoutOnClose). A lever pulled at one: open, then shut
+// after a second more. The trigger past the gates (ACT_OPENER) opens them for good
+#define STONE_CLOSE_S 1.5f
+#define STONE_LEVER_S 1.0f
+#define STONE_HEIGHT_M 3.0f
+#define GATE_CLEAR_M 6.0f // (you near a gate once sprinted: it waits. Skyrim's window is for its run, ~5 m/s;
+                          //  ours is 3.2 (main.c RUN_SPEED_MS). Walked, not sprinted, you're 14-20 m off when they drop)
+#define SPRINT_GATE_S 1.0f // (NorPortcullisGate01's Forward and Backward: 1.0 s, 0.97 s - its text keys)
 // A Hall of Stories door (converter/interiors.py): its three rings are pillars with this for a
 // controller, its keyhole wants the claw and their three signs right; then all of it goes
 #define CLAW_CONTROLLER 0xC1A30000u
@@ -37,6 +48,8 @@ typedef struct {
 	int link_count, failure_count;
 	char label[48];
 	int door; // doors.c (its moving part)
+	int on_it;     // (a dragon stone: stood on now)
+	float close_t; // (a dragon stone: its gate shuts when this runs out; 0 none due)
 } Activator;
 
 static Activator acts[MAX_ACTIVATORS];
@@ -104,6 +117,18 @@ const uint8_t *activators_append(const uint8_t *p, const uint8_t *end) {
 		}
 	}
 	claw_sync();
+	for (int i = 0; i < act_count; i++) { // (a gate shut that nothing here opens: a way that can't be taken - logged)
+		const Activator *g = &acts[i];
+		if (g->kind != ACT_GATE || gate_open(g) || !strcmp(g->label, "Lid"))
+			continue;
+		int opened = 0;
+		for (int j = 0; j < act_count && !opened; j++)
+			for (int k = 0; k < acts[j].link_count; k++)
+				opened |= acts[j].links[k] == g->ref;
+		if (!opened)
+			game_log("activator: gate %08x '%s' at %.0f %.0f %.0f - nothing here opens it", (unsigned)g->ref, g->label, g->centre[0],
+			         g->centre[1], g->centre[2]);
+	}
 	return p;
 }
 
@@ -121,8 +146,9 @@ int activators_aim(const float eye[3], const float dir[3], float *along, const c
 	int best = -1;
 	float best_t = 1e9f;
 	for (int i = 0; i < act_count; i++) {
-		if (TWO_STATE(acts[i].kind) || acts[i].kind == ACT_CLAWBASE || acts[i].kind == ACT_WEB || acts[i].kind == 0)
-			continue; // (opened by levers, not by hand)
+		if (TWO_STATE(acts[i].kind) || acts[i].kind == ACT_CLAWBASE || acts[i].kind == ACT_WEB || acts[i].kind == ACT_STONE ||
+		    acts[i].kind == ACT_OPENER || acts[i].kind == 0)
+			continue; // (opened by levers, not by hand; stood on)
 		float t;
 		if (aim_hits(eye, dir, acts[i].centre, acts[i].radius, REACH_M + acts[i].radius * 0.5f, &t) && t < best_t)
 			best = i, best_t = t;
@@ -200,11 +226,86 @@ int activators_open_near(const float pos[3], float radius) {
 	return n;
 }
 
+static Activator *by_ref(uint32_t ref) {
+	for (int i = 0; i < act_count; i++)
+		if (acts[i].ref == ref)
+			return &acts[i];
+	return NULL;
+}
+
+// The sprint gates opened for good (the stage trigger past them reached)
+static int sprint_open_for_good(void) {
+	for (int i = 0; i < act_count; i++)
+		if (acts[i].kind == ACT_OPENER && items_unlocked(acts[i].ref))
+			return 1;
+	return 0;
+}
+
+// A dragon stone's gate up or down (not remembered: it's held open, not opened)
+static void stone_gate(const Activator *s, int open) {
+	Activator *g = s->link_count ? by_ref(s->links[0]) : NULL;
+	if (!g || g->kind != ACT_GATE || gate_open(g))
+		return;
+	doors_set_swing(g->door, SPRINT_GATE_S);
+	doors_set_open(g->door, open);
+	sfx_play_at(open ? "gate_open" : "gate_close", g->centre, 30.0f);
+	game_log("activator: sprint gate %08x %s", (unsigned)g->ref, open ? "up" : "down");
+}
+
+void activators_update(float dt, const float feet[3]) {
+	const int done = sprint_open_for_good();
+	for (int i = 0; i < act_count; i++) {
+		Activator *a = &acts[i];
+		if (a->kind != ACT_STONE && a->kind != ACT_OPENER)
+			continue;
+		const int in = hypotf(feet[0] - a->centre[0], feet[2] - a->centre[2]) < a->radius &&
+		               fabsf(feet[1] - a->centre[1]) < STONE_HEIGHT_M;
+		if (a->kind == ACT_OPENER) {
+			if (in && !done) { // (dunUstengravQST stage 50: every gate up for good, the levers done)
+				items_set_unlocked(a->ref);
+				for (int k = 0; k < a->link_count; k++) {
+					Activator *g = by_ref(a->links[k]);
+					if (g && g->kind == ACT_GATE && !gate_open(g)) {
+						doors_set_open(g->door, 1);
+						items_set_unlocked(g->ref);
+					}
+				}
+				game_log("activator: the sprint gates open for good");
+			}
+			continue;
+		}
+		if (done) {
+			a->on_it = 0, a->close_t = 0.0f;
+			continue;
+		}
+		if (in && !a->on_it)
+			stone_gate(a, 1), a->close_t = 0.0f;
+		else if (!in && a->on_it)
+			a->close_t = STONE_CLOSE_S;
+		a->on_it = in;
+		if (a->close_t > 0.0f && (a->close_t -= dt) <= 0.0f) {
+			const Activator *g = a->link_count ? by_ref(a->links[0]) : NULL;
+			if (g && hypotf(feet[0] - g->centre[0], feet[2] - g->centre[2]) < GATE_CLEAR_M) {
+				a->close_t = 0.1f; // (not down on you: in Skyrim you'd be pushed out of it - here it waits)
+				continue;
+			}
+			a->close_t = 0.0f;
+			stone_gate(a, 0);
+			shouts_reset_recovery(); // (resetsShoutOnClose: the next try at once)
+		}
+	}
+}
+
 // Activates the activators with this reference (a lever's or puzzle's targets): a gate
 // opens or closes (and is remembered open)
 static void activate_ref(uint32_t ref) {
 	for (int i = 0; i < act_count; i++) {
 		Activator *a = &acts[i];
+		if (a->ref == ref && a->kind == ACT_STONE && !sprint_open_for_good() && !a->on_it) { // (a lever at a stone)
+			stone_gate(a, 1);
+			a->close_t = STONE_LEVER_S + STONE_CLOSE_S;
+			continue;
+		}
 		if (a->ref != ref || !TWO_STATE(a->kind))
 			continue;
 		const int open = !gate_open(a);
@@ -329,14 +430,35 @@ void activators_use(int index) {
 	case ACT_PUZZLE_LEVER: {
 		doors_pull(a->door);
 		sfx_play("lever_pull", 0.8f, 0.0f);
-		int pillars = 0, solved = 1;
-		for (int i = 0; i < act_count; i++)
-			if (acts[i].kind == ACT_PILLAR && acts[i].controller == a->ref)
-				pillars++, solved &= acts[i].state == acts[i].solve;
+		// Every pillar on its solved face; a two-stage pillar (Skuldafn Temple's: its other answer in solve's high
+		// four bits) picks which success: its first face the links before a 0, its second those after
+		int pillars = 0, solved = 1, two_stage = 0, answer = 0;
+		for (int i = 0; i < act_count; i++) {
+			const Activator *pl = &acts[i];
+			if (pl->kind != ACT_PILLAR || pl->controller != a->ref)
+				continue;
+			pillars++;
+			if (pl->solve >> 4) {
+				two_stage = 1;
+				answer = pl->state == (pl->solve & 15) ? 1 : pl->state == (pl->solve >> 4) ? 2 : 0;
+			} else {
+				solved &= pl->state == pl->solve;
+			}
+		}
+		if (two_stage)
+			solved &= answer != 0;
+		game_log("puzzle: lever %08x - %d pillars, %s%s", (unsigned)a->ref, pillars, solved ? "solved" : "not solved",
+		         two_stage && solved ? (answer == 1 ? " (its first answer)" : " (its other answer)") : "");
 		if (pillars && solved) {
-			for (int k = 0; k < a->link_count; k++)
-				if (!items_unlocked(a->links[k]))
+			int part = 1; // (the links before a 0: the first answer's; after it: the other's)
+			for (int k = 0; k < a->link_count; k++) {
+				if (!a->links[k]) {
+					part = 2;
+					continue;
+				}
+				if ((!two_stage || part == answer) && !items_unlocked(a->links[k]))
 					activate_ref(a->links[k]);
+			}
 		} else { // (the wrong faces: the darts it's linked to fly; without any, a token stab)
 			int sprung = 0;
 			for (int k = 0; k < a->failure_count; k++)

@@ -298,6 +298,12 @@ SWITCH_ON_SHOWS = 0x80
 # ... and these references themselves, there only until their switch is on (Skyrim animates
 # them away: the tower wall Alduin breaks open, DragonTowerHole01's collapse)
 SWITCH_REFS = {"duncgtowerhole01ref": 1}
+# Inside: the markers the main quest's scripts switch, kept with their own switch numbers (the
+# engine turns them on by the quest's stage: engine/src/quests.c quests_world_switches). The
+# interiors were baked as at a new game, so what hangs on these stayed in its first state for good
+# A negative number: the switch on is the marker DISABLED (its children go, the inverted ones come)
+SWITCHES_INSIDE = (("mq105enabledungeonmarker", -3),)  # Ustengrav's cave-in: MQ105 stage (its fragment
+#   42, the Horn asked for) disables it - the rubble and boulder go, the dug-out way and lantern come
 
 
 # References a quest enables that the export keeps enabled from the start (their quest's way in:
@@ -359,7 +365,7 @@ class LoadOrder:
                 rec = r
         return rec
 
-    def _enable_state(self, plugin, ref, states, switches=None):
+    def _enable_state(self, plugin, ref, states, switches=None, table=None):
         """Notes a reference's own enable state and its enable parent (XESP) for
         _drop_disabled."""
         g = self.global_id(plugin, ref.form_id)
@@ -368,7 +374,7 @@ class LoadOrder:
         states[g] = (not ref.flags & RECORD_INITIALLY_DISABLED, parent, bool(xesp and xesp[4] & 1))
         if switches is not None:
             eid = (ref.editor_id() or "").lower()
-            for prefix, number in SWITCHES:
+            for prefix, number in table or SWITCHES:
                 if eid.startswith(prefix):
                     switches[g] = number
 
@@ -389,7 +395,9 @@ class LoadOrder:
             own, parent, inverted = states[g]
             result = (own, 0)
             if own and parent is not None and parent in switches:
-                result = (True, switches[parent] | (0 if inverted else SWITCH_ON_SHOWS))
+                n = switches[parent]
+                shows_on = (not inverted) if n > 0 else inverted  # (a negative one: the marker disabled when on)
+                result = (True, abs(n) | (SWITCH_ON_SHOWS if shows_on else 0))
             elif own and parent is not None and parent in states and depth < 16:
                 memo[g] = (True, 0)  # (a cycle: as enabled)
                 pe, ptag = on(parent, depth + 1)
@@ -449,7 +457,7 @@ class LoadOrder:
         references and navmeshes are overridden by global form id, deleted and initially
         disabled references are dropped."""
         merged = {}
-        states = {}
+        states, switches = {}, {}
         for p in self.plugins:
             for local, c in p.interior_cells().items():
                 g = self.global_id(p, local)
@@ -467,10 +475,16 @@ class LoadOrder:
                         else:
                             m[kind][rg] = r
                             if kind == "refs":
-                                self._enable_state(p, r, states)
-        enabled = self._enabled(states)  # (inside: as at a new game, no switches)
+                                self._enable_state(p, r, states, switches, SWITCHES_INSIDE)
+        enabled = self._enabled(states, switches)  # (inside: as at a new game, but for SWITCHES_INSIDE)
         for m in merged.values():
-            m["refs"] = [r for g, r in m["refs"].items() if enabled.get(g, (True, 0))[0] or g in ENABLED_ANYWAY]
+            refs = []
+            for g, r in m["refs"].items():
+                on, tag = enabled.get(g, (True, 0))
+                if on or g in ENABLED_ANYWAY:
+                    r.switch = tag
+                    refs.append(r)
+            m["refs"] = refs
             m["navm"] = list(m["navm"].values())
         return merged
 

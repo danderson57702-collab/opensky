@@ -310,6 +310,10 @@ void shouts_equip(int i) {
 	equipped = i >= 0 && i < shout_count ? i : -1;
 }
 
+void shouts_reset_recovery(void) {
+	recovery_left = 0.0f;
+}
+
 float shouts_recovery_left(void) {
 	return recovery_left;
 }
@@ -508,7 +512,10 @@ static void shout(const Shout *s, int words, const float eye[3], const float loo
 		break;
 	}
 	case SHOUT_SPRINT: { // Whirlwind Sprint: you, flung ahead along the ground
-		static const float dist[3] = {7.0f, 14.0f, 20.0f}, secs[3] = {0.25f, 0.4f, 0.55f};
+		// (Skyrim's reach, measured in the game - UESP's talk page: Wuld about 930 units, Nah about 1525;
+		// Kest carried on at that step. Its records don't hold it: the dash is its behaviour's. Was 7/14/20 m -
+		// half Wuld's, and Ustengrav's gates, built for Wuld alone, couldn't be passed)
+		static const float dist[3] = {13.3f, 21.8f, 30.3f}, secs[3] = {0.35f, 0.5f, 0.65f};
 		fx->dash = 1, fx->dash_dir[0] = dir[0], fx->dash_dir[1] = dir[2];
 		fx->dash_speed = dist[w] / secs[w], fx->dash_s = secs[w];
 		sfx_play("shout_sprint", 1.0f, 0.0f);

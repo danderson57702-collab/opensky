@@ -65,7 +65,8 @@ void shouts_set_known_souls(int souls);
 const char *shouts_soul_unlocks(int souls_before, int souls_after);
 int shouts_equipped(void);                  // the voice slot's shout, -1: the race's power
 void shouts_equip(int i);
-float shouts_recovery_left(void);           // seconds till the next shout
+float shouts_recovery_left(void);
+void shouts_reset_recovery(void);            // (a puzzle's gate shut: the next shout at once)           // seconds till the next shout
 int shouts_holding(void);                   // the button's held: words gathered so far (0: not)
 void shouts_set_recovery_mult(float m);    // Fortify Shouts: the recovery's share (1: as Skyrim's)
 void shouts_set_fast_recovery(int on);      // (developer: a few seconds' recovery, to try them)

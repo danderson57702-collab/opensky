@@ -83,6 +83,14 @@ STATIONS = {0x88105: 1, 0xF46CE: 1, 0xA5CCE: 2, 0x7866A: 3, 0xA5CB3: 4, 0x88108:
 STATION_NAMES = {1: "Forge", 2: "Smelter", 3: "Tanning Rack", 4: "Cooking Pot", 5: "Grindstone", 6: "Workbench",
                  7: "Arcane Enchanter"}
 ACT_PILLAR, ACT_LEVER, ACT_PUZZLE_LEVER, ACT_GATE, ACT_BRIDGE, ACT_KEYHOLE, ACT_CLAWBASE, ACT_WEB = 1, 2, 3, 4, 5, 6, 7, 8
+# Ustengrav's Whirlwind Sprint puzzle (dunUstenPuzTrigScript, dunUstenPuzGateScript): a dragon stone
+# opens its linked gate while you stand on it and lets it shut 1.5 s after you step off; past the
+# gates, dunUstengravQST's stage 50 trigger opens all of them for good (its fragment 17)
+ACT_STONE, ACT_OPENER = 9, 10
+PILLAR_SCRIPTS = ("defaultpuzzlepillarscript", "defaultpuzzlepillarnofurn", "dunskuldafnpuzzlepillar01script",
+                  "dunskuldafnpuzzlepillartwostage")
+PUZZLE_LEVER_SCRIPTS = ("defaultpillarpuzzlelever", "defaultpillarpuzzlelevernofurn", "dunskuldafnpuzzlecontrolscript")
+USTENGRAV_QUEST, USTENGRAV_OPEN_STAGE = 0x0002125B, 50
 # A Hall of Stories door (Bleak Falls Barrow's, the Golden Claw's): three rings turned to the
 # claw's three signs - the engine's pillars, their "lever" the keyhole (ACT_KEYHOLE: it wants
 # the claw); the door's base goes with them when it opens. The rings carry this for a controller.
@@ -483,6 +491,10 @@ class Exporter:
         if not ref.sub("NAME") or not ref.sub("DATA"):
             return None
         base = self.lo.record(self.lo.global_id(ref.plugin, _u32(ref.sub("NAME"))), types=("ACTI", "FURN", "DOOR"))
+        if base is not None and not base.sub("MODL"):
+            trig = self._sprint_trigger(ref, base)
+            if trig is not None:
+                return None, trig
         if base is None or not base.sub("MODL"):
             return None
         if base.type == "DOOR" and (ref.sub("XTEL") or not ref.sub("XAPR") or "secret" not in (base.editor_id() or "").lower()):
@@ -503,7 +515,8 @@ class Exporter:
             # scripts, so it was left a door no hand could open and nothing pulled did - the way out shut)
             kind, model_kind = ACT_GATE, "door"
             state = 1
-        elif base.type == "ACTI" and "spiderwebkit" in beid and base.sub("DEST") and "actor" not in beid:
+        elif base.type == "ACTI" and ("spiderwebkit" in beid or "spiderwebhitstrip" in beid) and base.sub("DEST") and \
+                "actor" not in beid:  # (and the strips across a way - Skuldafn Temple's behind its secret sarcophagus)
             # (Skyrim's destructible spider webs - Arvel's across Bleak Falls' passage: cut down or
             # burnt away; baked with the room, nothing could take them down and the way on was shut)
             kind, model_kind = ACT_WEB, "web"
@@ -550,17 +563,31 @@ class Exporter:
                         kids.append(link_gid)
         elif beid.startswith("puzzledoorbase"):
             kind, model_kind = ACT_CLAWBASE, "clawdoor"
-        elif "defaultpuzzlepillarscript" in scripts:
+        elif any(k in scripts for k in PILLAR_SCRIPTS):
+            # (a puzzle pillar: Skyrim's default, its "NoFurn" kind, Skuldafn Temple's own - and its two-stage
+            # one, whose second solved face is the puzzle's other answer: in the high four bits of solve)
             kind, model_kind = ACT_PILLAR, "pillar"
-            props = scripts["defaultpuzzlepillarscript"]
-            state, solve = int(props.get("initialState", 1)), int(props.get("solveState", 1))
+            props = scripts[next(k for k in PILLAR_SCRIPTS if k in scripts)]
+            state = int(props.get("initialState", 1))
+            if "solveState1" in props:
+                solve = int(props.get("solveState1", 1)) | int(props.get("solveState2", 0)) << 4
+            else:
+                solve = int(props.get("solveState", 1))
             for t, v in ref.subrecords():
                 if t == "XLKR" and len(v) >= 8:
                     controller = self.lo.global_id(ref.plugin, _u32(v, 4))
-        elif "defaultpillarpuzzlelever" in scripts:
+        elif any(k in scripts for k in PUZZLE_LEVER_SCRIPTS):
+            # (a pillar puzzle's lever: what its success opens; Skuldafn Temple's has a second success - the
+            # two-stage pillar's other face - after a 0 in the list: dunSkuldafnPuzzleControlScript)
             kind, model_kind = ACT_PUZZLE_LEVER, "lever"
-            props = scripts["defaultpillarpuzzlelever"]
-            kids = [v for k, v in sorted(props.items()) if k.lower().startswith("refactonsuccess") and v]
+            props = scripts[next(k for k in PUZZLE_LEVER_SCRIPTS if k in scripts)]
+            kids = [v for k, v in sorted(props.items()) if k.lower().startswith("refactonsuccess01") and v]
+            alt = [v for k, v in sorted(props.items()) if k.lower().startswith("refactonsuccess") and
+                   not k.lower().startswith("refactonsuccess01") and v]
+            if "dunskuldafnpuzzlecontrolscript" in scripts and alt:
+                kids = kids + [0] + alt
+            else:
+                kids = kids + alt
             failures = [v for k, v in sorted(props.items()) if k.lower().startswith("refactonfailure") and v]
         elif any(k in scripts for k in LEVER_SCRIPTS):
             kind, model_kind = ACT_LEVER, "lever"
@@ -618,6 +645,38 @@ class Exporter:
             out += struct.pack("<HH3f3ff3f", idx, 0, *pivot, *axis, angle, *slide)
         self.stats["activators"] += 1
         return entry, out
+
+    def _sprint_trigger(self, ref, base):
+        """A packed activator for Ustengrav's sprint puzzle's trigger boxes (no model): a dragon stone
+        (ACT_STONE, linked to its gate) or the stage trigger past the gates (ACT_OPENER, all of them);
+        None for any other trigger."""
+        scripts = self._scripts(ref, base)
+        xprm = ref.sub("XPRM")
+        if not xprm or len(xprm) < 12:
+            return None
+        if "dunustenpuztrigscript" in scripts:
+            kind = ACT_STONE
+            kids = [self.lo.global_id(ref.plugin, _u32(v, 4)) for t, v in ref.subrecords()
+                    if t == "XLKR" and len(v) >= 8 and _u32(v) == 0][:1]
+        elif "defaultsetstagetrigscript" in scripts:
+            props = scripts["defaultsetstagetrigscript"]
+            if props.get("myQuest") != USTENGRAV_QUEST or int(props.get("stage", 0)) != USTENGRAV_OPEN_STAGE:
+                return None
+            kind, kids = ACT_OPENER, list(getattr(self, "_sprint_gates", []))
+        else:
+            return None
+        if not kids:
+            return None
+        from extract_objects import ref_transform
+        hx, hy, _hz = struct.unpack_from("<3f", xprm)
+        m, t = ref_transform(ref.sub("DATA"), 1.0)
+        radius = float(max(hx, hy) / 70.0)  # (the box's half size, metres: stood within it)
+        gid = self.lo.global_id(ref.plugin, ref.form_id)
+        out = struct.pack("<IBBBBfIBBH", gid, kind, 0, 0, 0, radius, 0, len(kids), 0, 0)
+        out += b"".join(struct.pack("<I", k) for k in kids)
+        out += struct.pack("<9f3f3f3BB", *m.reshape(-1), *t, *t, 128, 128, 128, 0)  # (no parts: nothing drawn)
+        self.stats["sprint triggers"] += 1
+        return out
 
     def _trap(self, ref, light):
         """(placement entry of its still part or None, packed trap) for one of Skyrim's traps or
@@ -902,12 +961,14 @@ class Exporter:
         self.stats["lights"] += len(lights)
         return Lighting(xcll, template, lights)
 
-    def export(self, pack, bounds):
-        """Writes every selected interior; returns {interior cell gid: index}."""
+    def export(self, pack, bounds, only=None):
+        """Writes every selected interior; returns {interior cell gid: index}. only: a set of
+        interior names (editor ids, lowercase) - just those written again (tools/reexport_interiors.py),
+        the rest of the folder, the names and the doors outside left as they are."""
         from navmesh import export_interior
         out_dir = os.path.join(pack, "interiors")
         os.makedirs(out_dir, exist_ok=True)
-        for old in os.listdir(out_dir):
+        for old in os.listdir(out_dir) if not only else []:
             os.remove(os.path.join(out_dir, old))
         order = self.select(bounds)
         index = {cg: i for i, cg in enumerate(order)}
@@ -917,6 +978,8 @@ class Exporter:
             c = self.inner[cg]
             eid = (c["cell"].editor_id() if c["cell"] is not None else f"cell{cg:08x}").lower()
             names.append(eid + "\t" + self._name_for(c).replace("\t", " ").replace("\n", " "))
+            if only and eid not in only:
+                continue
             skipped = Counter()
             light = self._lighting(c["cell"], c["refs"]) if c["cell"] is not None else None
             entries, swings, containers, loose, acts = [], [], [], [], []
@@ -928,7 +991,20 @@ class Exporter:
                         children.setdefault(self.lo.global_id(r.plugin, _u32(v)), []).append(
                             self.lo.global_id(r.plugin, r.form_id))
             traps = []
+            # (the sprint gates' own collision boxes: the gate's script switches its linked box with it -
+            # here the gate's model collides as it moves, so the box is left out; and the gates the stage
+            # trigger past them opens)
+            self._sprint_gates, gate_boxes = [], set()
             for r in c["refs"]:
+                base = self.lo.record(self.lo.global_id(r.plugin, _u32(r.sub("NAME"))), types=("ACTI",)) if r.sub("NAME") else None
+                if base is not None and "dunustenpuzgatescript" in self._scripts(r, base):
+                    self._sprint_gates.append(self.lo.global_id(r.plugin, r.form_id))
+                    for t, v in r.subrecords():
+                        if t == "XLKR" and len(v) >= 8 and _u32(v) == 0:
+                            gate_boxes.add(self.lo.global_id(r.plugin, _u32(v, 4)))
+            for r in c["refs"]:
+                if self.lo.global_id(r.plugin, r.form_id) in gate_boxes:
+                    continue
                 trap = self._trap(r, light)
                 if trap is not None:
                     if trap[0]:
@@ -965,12 +1041,14 @@ class Exporter:
             parsed = []
             for e in entries:
                 v = struct.unpack("<HH9f3f", e)
-                parsed.append((v[0], np.array(v[2:11], np.float32).reshape(3, 3), np.array(v[11:14], np.float32)))
+                parsed.append((v[0], np.array(v[2:11], np.float32).reshape(3, 3), np.array(v[11:14], np.float32), v[1]))
             rooms = self._rooms(c["refs"])
             self._pending.append((eid, c, entries, doors, light, parsed, swings, containers, loose, acts, furniture,
                                   traps, rooms))
             if export_interior(self.lo, c["navm"], os.path.join(out_dir, eid + ".sknav")):
                 self.stats["with navmesh"] += 1
+        if only:
+            return index
         with open(os.path.join(out_dir, "interiors.txt"), "w") as f:
             f.write("".join(n + "\n" for n in names))
         # Exterior doors into them

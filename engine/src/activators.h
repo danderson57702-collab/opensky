@@ -16,6 +16,8 @@ const uint8_t *activators_load(const uint8_t *p, const uint8_t *end);
 // Outdoors: the cells' activators added (a puzzle by the road); cleared with the cells
 const uint8_t *activators_append(const uint8_t *p, const uint8_t *end);
 void activators_clear(void);
+// Each frame inside: Ustengrav's dragon stones under your feet (their gates held open, shut after)
+void activators_update(float dt, const float feet[3]);
 void activators_log_near(const float pos[3], float radius); // (testing)
 int activators_force_open_near(const float pos[3], float radius);
 int activators_open_near(const float pos[3], float radius); // (a script's gates: opened)

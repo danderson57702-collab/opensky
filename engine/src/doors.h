@@ -29,6 +29,7 @@ void doors_set_pose(int door, float u);
 int doors_part_blow(int door, float out[3], float *radius);
 // Opens / closes one (a container's lid, a gate); at once (a gate already opened)
 void doors_set_open(int door, int open);
+void doors_set_swing(int door, float seconds); // (how long it takes to open or shut)
 void doors_set_open_now(int door, int open);
 // A puzzle pillar's face at the start: this many steps already turned
 void doors_set_turns(int door, float turns);

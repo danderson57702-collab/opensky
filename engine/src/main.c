@@ -377,6 +377,25 @@ static void measure_start(void) {
 	         post_max_h());
 }
 
+// A measurement kept apart from the log (which holds two runs: a Whiterun measure was gone by the next
+// evening's play): appended to ux0:data/opensky_measure.txt, the place, the settings and each kind's times
+#define MEASURE_FILE "ux0:data/opensky_measure.txt"
+static void measure_keep(void) {
+	char text[2048];
+	const Settings *st = menu_settings();
+	int n = snprintf(text, sizeof(text), "== build %s, at %s, up to %dx%d, quality %d, frame rate %d, msaa %d, upscaler %d\n",
+	                 BUILD_STAMP, interior_place(), post_max_w(), post_max_h(), st->performance, st->frame_rate,
+	                 st->msaa, st->upscaler);
+	for (int k = 0; k < MS_COUNT && n < (int)sizeof(text) - 96; k++)
+		n += snprintf(text + n, sizeof(text) - n, "%-38s %5.1f ms (%4.1f + %4.1f)\n", MS_NAME[k],
+		              measure_ms[k][0] + measure_ms[k][1], measure_ms[k][0], measure_ms[k][1]);
+	SceUID f = sceIoOpen(MEASURE_FILE, SCE_O_WRONLY | SCE_O_CREAT | SCE_O_APPEND, 0666);
+	if (f >= 0) {
+		sceIoWrite(f, text, n);
+		sceIoClose(f);
+	}
+}
+
 // At the frame's end, the swap done: this frame's two times in; the next kind, or the end
 static void measure_frame_done(unsigned long long cpu_us, unsigned long long gpu_us) {
 	if (++measure_frame > MS_WARM_FRAMES)
@@ -399,6 +418,7 @@ static void measure_frame_done(unsigned long long cpu_us, unsigned long long gpu
 		snprintf(note, sizeof(note), "Measured: %.0f ms a frame here (in the log)", measure_ms[MS_ALL][0] + measure_ms[MS_ALL][1]);
 		ui_notice(note, 5.0f);
 		game_log("measure: done");
+		measure_keep();
 	}
 }
 
@@ -524,6 +544,9 @@ static int bow_nocked = -1; // the arrow on the string while a bow is drawn (ite
 static float zoom_fov = 1.0f;
 static float view_fov = FOV_Y; // (the world's field of view: the options' - first or third person)   // the view's field narrowed by this (Eagle Eye: Block while aiming)
 static float world_slow = 1.0f; // time's pace (Steady Hand: slowed while zoomed in)
+static float walkto_at[2], walkto_left, walkto_still, walkto_last[2]; // (autotest "walkto")
+static float walkto_pts[96 * 3], walkto_goal[2]; // (its way along the navmesh: corner points, the next one)
+static int walkto_n, walkto_i;
 static float dash_left, dash_dir[2], dash_speed; // Whirlwind Sprint: flung along the ground
 static int test_fast_shouts;           // (a test run that learned a word: a few seconds' recovery)
 static float ethereal_left;             // Become Ethereal: unharmed, harmless
@@ -1797,6 +1820,28 @@ int main(void) {
 		perf_lap("pad");
 		sceCtrlPeekBufferPositive(0, &pad, 1);
 		autotest_pad(clock_s, &pad); // (a scripted test run: the script's pad)
+		if (walkto_left > 0.0f) { // (autotest "walkto": turned toward the point and walked on)
+			while (walkto_i < walkto_n - 1 && hypotf(walkto_pts[walkto_i * 3] - player.x, walkto_pts[walkto_i * 3 + 2] - player.z) < 0.7f)
+				walkto_i++; // (a corner reached: on to the next)
+			if (walkto_n)
+				walkto_at[0] = walkto_pts[walkto_i * 3], walkto_at[1] = walkto_pts[walkto_i * 3 + 2];
+			const float dx = walkto_at[0] - player.x, dz = walkto_at[1] - player.z,
+			            d = walkto_i < walkto_n - 1 ? 9.0f : hypotf(walkto_goal[0] - player.x, walkto_goal[1] - player.z);
+			walkto_left -= 1.0f / 30.0f;
+			walkto_still = hypotf(player.x - walkto_last[0], player.z - walkto_last[1]) < 0.02f ? walkto_still + 1.0f / 30.0f : 0.0f;
+			walkto_last[0] = player.x, walkto_last[1] = player.z;
+			if (d < 0.8f || walkto_left <= 0.0f || walkto_still > 3.0f) {
+				game_log("walkto: %s at %.1f %.1f %.1f (wanted %.1f %.1f, %.1f m off; corner %d of %d)", d < 0.8f ? "arrived" : "stuck",
+				         player.x, player.feet, player.z, walkto_goal[0], walkto_goal[1], hypotf(walkto_goal[0] - player.x, walkto_goal[1] - player.z),
+				         walkto_i, walkto_n);
+				for (int k = walkto_i; k < walkto_n && k < walkto_i + 4 && d >= 0.8f; k++)
+					game_log("walkto:   corner %d at %.1f %.1f %.1f", k, walkto_pts[k * 3], walkto_pts[k * 3 + 1], walkto_pts[k * 3 + 2]);
+				walkto_left = 0.0f;
+			} else {
+				yaw = atan2f(dx, -dz) * 180.0f / (float)M_PI;
+				pad.lx = 128, pad.ly = 0;
+			}
+		}
 		if (menu_settings()->rear_touch) { // (the back's left half is L, its right half R: menus too)
 			static int sampling;
 			if (!sampling)
@@ -3129,6 +3174,8 @@ int main(void) {
 				perf_begin(PERF_GAME);
 		perf_lap("traps");
 				traps_update(dt, feet_at);
+				if (interior_current() >= 0)
+					activators_update(dt, feet_at); // (Ustengrav's dragon stones)
 		perf_lap("projectiles");
 				float shot = projectiles_update(dt * slow_time_mult, feet_at) * taken_mult(); // (arrows: the difficulty's)
 				{ // A shield raised: arrows blocked as blows are (Deflect Arrows: all of them); bolts:
@@ -4295,6 +4342,20 @@ int main(void) {
 				}
 			} else if (act.kind == AT_SLEEP) { // ("sleep": as a night in a bed - in a jail cell, the time served)
 				test_sleep = 1;
+			} else if (act.kind == AT_WALKTO) {
+				float secs = 20.0f;
+				float gy = player.feet;
+				if (sscanf(act.arg, "%f %f %f %f", &walkto_at[0], &walkto_at[1], &secs, &gy) >= 2) {
+					walkto_left = secs, walkto_still = 0.0f, walkto_last[0] = player.x, walkto_last[1] = player.z;
+					walkto_goal[0] = walkto_at[0], walkto_goal[1] = walkto_at[1], walkto_n = walkto_i = 0;
+					NavRef a, b;
+					float pa[3], pb[3];
+					if (navmesh_nearest(player.x, player.feet, player.z, 3.0f, &a, pa) &&
+					    navmesh_nearest(walkto_at[0], gy, walkto_at[1], 4.0f, &b, pb))
+						walkto_n = navmesh_path(a, pa, b, pb, walkto_pts, 96);
+					game_log("walkto: %d corners along the navmesh to %.1f %.1f%s", walkto_n, walkto_at[0], walkto_at[1],
+					         walkto_n ? "" : " (no way found: straight at it)");
+				}
 			} else if (act.kind == AT_MEASURE) { // ("measure": Options' Measure, here)
 				test_measure = 1;
 			} else if (act.kind == AT_DEBUG) { // ("debug": Debug controls on - no longer in Options)

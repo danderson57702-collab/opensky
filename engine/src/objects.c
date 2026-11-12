@@ -580,7 +580,7 @@ static void collision_job_work(StreamJob *base) {
 		if (e->model >= model_count || !switch_shown(e->reserved))
 			continue;
 		Model *m = &models[e->model];
-		if ((e->reserved & SWITCH_ON_SHOWS) && (strstr(m->name, "rubble") || strstr(m->name, "collisionmarker")))
+		if ((e->reserved & SWITCH_ON_SHOWS) && (e->reserved & 31) <= 2 && (strstr(m->name, "rubble") || strstr(m->name, "collisionmarker")))
 			continue; // (the attack's rubble and its blockers: no collision - the way through the town was shut)
 		if (strstr(m->name, "collisionmarker") && e->t[0] > HELGEN_X0 && e->t[0] < HELGEN_X1 && e->t[2] > HELGEN_Z0 &&
 		    e->t[2] < HELGEN_Z1)
@@ -639,6 +639,7 @@ static void collision_job_work(StreamJob *base) {
 }
 
 static int indoors;          // an interior is loaded (objects_interior_*)
+static float in_collision_x = 1e9f, in_collision_z = 1e9f;
 static int force_collision;  // rebuild the exterior collision region (back outside)
 static unsigned interior_gen; // which interior is loaded (its collision jobs say)
 
@@ -989,7 +990,7 @@ void objects_set_switch(int number, int on) {
 	else
 		switches_on &= ~(1u << (number & 31));
 	if (switches_on != was)
-		force_collision = 1; // (walls fallen, rubble come: the collision built again)
+		force_collision = 1, in_collision_x = in_collision_z = 1e9f; // (walls fallen, rubble come: the collision built again - inside too)
 }
 
 uint32_t objects_switches(void) {
@@ -998,7 +999,7 @@ uint32_t objects_switches(void) {
 
 void objects_set_switches(uint32_t bits) {
 	if (bits != switches_on)
-		switches_on = bits, force_collision = 1;
+		switches_on = bits, force_collision = 1, in_collision_x = in_collision_z = 1e9f;
 }
 
 void objects_world_changed(void) {
@@ -1608,7 +1609,6 @@ int objects_interior_tile(const float min[3], const float max[3], int room, cons
 // doesn't fit in memory)
 static Entry *in_entries;
 static int in_entry_count, in_collision_pending;
-static float in_collision_x = 1e9f, in_collision_z = 1e9f;
 
 static int interior_collision_finish(StreamJob *base, unsigned long long deadline) {
 	in_collision_pending = 0;

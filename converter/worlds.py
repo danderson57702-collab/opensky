@@ -140,6 +140,24 @@ def export(lo, tamriel, models, inside, pack, entry_for_ref, write_cell):
     return out
 
 
+def cities_only(lo):
+    """export's {prefix: (cells, keys)} without writing anything (tools/reexport_interiors.py: the
+    interiors' order starts from these worlds' doors)."""
+    out = {}
+    for world_eid, prefix, _title in CITIES:
+        cells, city = city_cells(lo, world_eid)
+        out[prefix] = (cells, city)
+    for world_eid, prefix, _title in OWN_LAND:
+        try:
+            cells = lo.exterior_cells(world_eid)
+        except KeyError:
+            continue
+        keys = {k for k, c in cells.items() if c["refs"] or c.get("land") or c.get("navm")}
+        if keys:
+            out[prefix] = (cells, keys)
+    return out
+
+
 def land_title(lo):
     """The open world's own name, as the player's copy has it (its Tamriel worldspace's FULL):
     the engine's loading screens and saves name the outdoors by it, not by a name of its own."""

@@ -346,6 +346,19 @@ class NIF:
                     out[self.string(node)] = pose
         return out
 
+    def lone_transform_end(self):
+        """sequence_end_pose for a model animated by its behaviour alone (no sequence, as Skyrim's upright
+        sarcophagus lid: Sarcophagus_TopVert01.nif's "Forward"): its one interpolator's last keys, for its
+        one node. Empty unless there's exactly one of each."""
+        interps = [i for i, t in enumerate(self.block_types) if t == "NiTransformInterpolator"]
+        nodes = [i for i, t in enumerate(self.block_types) if t == "NiNode"]
+        if len(interps) != 1 or len(nodes) != 1:
+            return {}
+        pose = self._transform_interpolator_end(interps[0])
+        if pose is None:
+            return {}
+        return {self.string(Reader(self.data, self.block_offsets[nodes[0]]).i32()): pose}
+
     def _transform_interpolator_end(self, idx):
         r = Reader(self.data, self.block_offsets[idx])
         tx, ty, tz, qw, qx, qy, qz, _scale = r.unpack("8f")
