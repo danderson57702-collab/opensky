@@ -1,0 +1,22 @@
+# Converted Skyrim data: never commit or distribute
+pack/
+
+# Build outputs
+build/
+*.vpk
+third_party/vitaGL/**/*.o
+third_party/vitaGL/libvitaGL.a
+__pycache__/
+
+# macOS
+.DS_Store
+
+# Stale early copy of m1_cube (not part of the project)
+/vita-skyrim-lite/
+
+# The data maker's work and its folder for the Vita (converted game data: never commit or distribute)
+OpenSKY-data/
+/dist/
+
+# Each user's own install path (the converter reads it)
+converter/data_path.txt

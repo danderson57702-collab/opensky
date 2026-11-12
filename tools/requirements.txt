@@ -1,0 +1,8 @@
+# What the converter (and tools/make_data.py) needs: python3 -m pip install -r tools/requirements.txt
+# (the versions it was written and checked with)
+numpy==2.0.2
+pillow==11.3.0
+etcpak==0.9.15
+lz4==4.4.5
+av==15.1.0
+meshoptimizer==0.2.30a0

@@ -1,0 +1,123 @@
+diff --git a/source/shared.h b/source/shared.h
+index 6954fa3..5bc8777 100644
+--- a/source/shared.h
++++ b/source/shared.h
+@@ -201,6 +201,7 @@ typedef struct texture {
+ #endif
+ 	uint8_t status;
+ 	uint8_t mip_count;
++	uint8_t alloc_mips; // OpenSKY patch: mip levels the current data allocation can hold
+ 	uint8_t ref_counter;
+ 	uint8_t faces_counter;
+ 	GLboolean use_mips;
+diff --git a/source/utils/gpu_utils.c b/source/utils/gpu_utils.c
+index 4464db5..def6495 100644
+--- a/source/utils/gpu_utils.c
++++ b/source/utils/gpu_utils.c
+@@ -23,6 +23,14 @@
+ 
+ #include "../shared.h"
+ 
++// OpenSKY patch: swizzle compressed (DXT) uploads on the CPU instead of with
++// asynchronous sceGxmTransferCopy. GPU-side transfer writes into recycled texture
++// memory are not tracked by Vita3K's texture cache (garbage textures), and the async
++// copy can race vitaGL's own mip-chain reallocation. CPU swizzling avoids both.
++#ifndef VGL_FORCE_CPU_SWIZZLE
++#define VGL_FORCE_CPU_SWIZZLE 1
++#endif
++
+ #include "texture_swizzler.h"
+ 
+ #ifdef HAVE_TEX_CACHE
+@@ -695,9 +703,12 @@ void gpu_alloc_compressed_texture(int32_t mip_level, uint32_t w, uint32_t h, Sce
+ 		tex_width = max_width;
+ 		tex_height = max_height;
+ 
+-		if (mip_count >= mip_level)
++		if (mip_count >= mip_level || tex->alloc_mips > mip_level) {
++			// OpenSKY patch: storage for this level already exists, write in place
+ 			texture_data = tex->data;
+-		else {
++			if (mip_level > mip_count)
++				mip_count = mip_level;
++		} else {
+ 			texture_data = vgl_realloc(tex->data, tex_size);
+ 			if (!texture_data) {
+ 				// Reallocation in the same mspace failed, try manually.
+@@ -709,12 +720,20 @@ void gpu_alloc_compressed_texture(int32_t mip_level, uint32_t w, uint32_t h, Sce
+ 
+ 			// Set new mip count.
+ 			mip_count = mip_level;
++			tex->alloc_mips = mip_level + 1;
+ 		}
+ 	} else {
+ 		mip_count = mip_level;
+ 		tex_width = w;
+ 		tex_height = h;
+-		texture_data = gpu_alloc_mapped_for_gpu(tex_size);
++		// OpenSKY patch: allocate the whole mip chain up front so later levels are
++		// written in place. Growing it per level (realloc) frees and reuses blocks at
++		// the same addresses, which Vita3K's texture cache serves stale (garbage textures).
++		int full_levels = 0;
++		while ((1 << full_levels) < (int)(aligned_width > aligned_height ? aligned_width : aligned_height))
++			full_levels++;
++		texture_data = gpu_alloc_mapped_for_gpu(gpu_get_compressed_mipchain_size(full_levels, aligned_width, aligned_height, format));
++		tex->alloc_mips = full_levels + 1;
+ 	}
+ 
+ 	// Initializing texture data buffer
+@@ -737,7 +756,7 @@ void gpu_alloc_compressed_texture(int32_t mip_level, uint32_t w, uint32_t h, Sce
+ 				case SCE_GXM_TEXTURE_FORMAT_UBC2_ABGR:
+ 				case SCE_GXM_TEXTURE_FORMAT_UBC3_ABGR:
+ 				case SCE_GXM_TEXTURE_FORMAT_UBC5_GR:
+-					if (aligned_width == w && aligned_height == h && h <= 2048 && w <= 2048) {
++					if (!VGL_FORCE_CPU_SWIZZLE && aligned_width == w && aligned_height == h && h <= 2048 && w <= 2048) {
+ #ifdef TEXTURE_UPLOADS_SPEEDHACK
+ 						void *mapped_src = data;
+ #else
+@@ -770,7 +789,7 @@ void gpu_alloc_compressed_texture(int32_t mip_level, uint32_t w, uint32_t h, Sce
+ 					}
+ 					break;
+ 				default:
+-					if (aligned_width == w && aligned_height == h && h <= 2048) {
++					if (!VGL_FORCE_CPU_SWIZZLE && aligned_width == w && aligned_height == h && h <= 2048) {
+ #ifdef TEXTURE_UPLOADS_SPEEDHACK
+ 						void *mapped_src = data;
+ #else
+diff --git a/source/utils/gpu_utils.h b/source/utils/gpu_utils.h
+index 8abf57b..4b87cf0 100644
+--- a/source/utils/gpu_utils.h
++++ b/source/utils/gpu_utils.h
+@@ -189,6 +189,7 @@ static inline __attribute__((always_inline)) void gpu_free_texture_data(texture
+ 		}
+ 		tex->data = NULL;
+ 	}
++	tex->alloc_mips = 0;
+ 	if (tex->palette_data != NULL) {
+ #ifndef TEXTURES_SPEEDHACK
+ 		if (vgl_framecount - tex->last_frame > FRAME_PURGE_FREQ) {
+diff --git a/source/utils/gxm_utils.c b/source/utils/gxm_utils.c
+index 61803f3..0e5c39f 100644
+--- a/source/utils/gxm_utils.c
++++ b/source/utils/gxm_utils.c
+@@ -28,7 +28,7 @@
+ #define XXH_memset sceClibMemset
+ #include "xxhash_utils.h"
+ 
+-#define UNIFORM_CIRCULAR_POOL_SIZE (2 * 1024 * 1024)
++#define UNIFORM_CIRCULAR_POOL_SIZE (8 * 1024 * 1024) // OpenSKY: 2 MB wrapped within the frames Vita3K keeps in flight
+ 
+ void *vgl_def_frag_buf = NULL;
+ void *vgl_def_vert_buf = NULL;
+@@ -224,8 +224,11 @@ void vglSetupUniformCircularPool() {
+ 	}
+ }
+ 
++uint32_t vgl_uniform_bytes_reserved = 0; // OpenSKY: diagnostics (total since boot)
++
+ void *vglReserveUniformCircularPoolBuffer(uint32_t size) {
+ 	void *r;
++	vgl_uniform_bytes_reserved += size;
+ 	if (unif_idx + size >= UNIFORM_CIRCULAR_POOL_SIZE) {
+ #ifndef SKIP_ERROR_HANDLING
+ 		static uint32_t last_frame_swap = 0;

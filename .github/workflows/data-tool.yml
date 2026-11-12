@@ -1,0 +1,63 @@
+# Builds the testers' data maker (tools/make_data.py with the converter inside it) as one program
+# for Windows and for macOS, checks it starts and its parts work (--selftest: no game is on the
+# builder, and none is needed), and keeps the programs as the run's artifacts. A tag "beta-*"
+# also attaches them to that release. No game data is read, made or stored here.
+name: data tool
+on:
+  push:
+    branches: [main]
+    tags: ["beta-*"]
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            name: opensky-data-windows.exe
+            lib: libadpcm.dll
+            sep: ";"
+          - os: macos-14
+            name: opensky-data-macos-arm64
+            lib: libadpcm.dylib
+            sep: ":"
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Libraries
+        run: python -m pip install -r tools/requirements.txt pyinstaller==6.22.3
+      - name: The sound coder
+        shell: bash
+        run: gcc -O2 -shared -fPIC -o ${{ matrix.lib }} converter/adpcm.c || cc -O2 -shared -fPIC -o ${{ matrix.lib }} converter/adpcm.c
+      - name: Check from source
+        run: python tools/make_data.py --selftest
+      - name: One program
+        shell: bash
+        run: >
+          pyinstaller --onefile --console --name opensky-data
+          --paths converter --paths tools
+          --add-binary "${{ matrix.lib }}${{ matrix.sep }}."
+          --collect-all meshoptimizer --collect-all etcpak --collect-all archspec --collect-all av
+          tools/make_data.py
+      - name: Check the program
+        shell: bash
+        run: |
+          ./dist/opensky-data* --selftest
+          ./dist/opensky-data* --find || true
+          mkdir out && cp dist/opensky-data* "out/${{ matrix.name }}"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.name }}
+          path: out/${{ matrix.name }}
+      - name: Attach to the release
+        if: startsWith(github.ref, 'refs/tags/beta-')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: out/${{ matrix.name }}
+          prerelease: true
