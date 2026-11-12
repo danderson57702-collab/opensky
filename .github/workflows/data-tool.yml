@@ -1,5 +1,6 @@
 # Builds the testers' data maker (tools/make_data.py with the converter inside it) as one program
-# for Windows and for macOS, checks it starts and its parts work (--selftest: no game is on the
+# for Windows (the Mac program is built on a Mac with the same pyinstaller line below - GitHub's free
+# private repositories get no Mac runners: "macos-14-arm64-us-xl is not supported"), checks it starts and its parts work (--selftest: no game is on the
 # builder, and none is needed), and keeps the programs as the run's artifacts. A tag "beta-*"
 # also attaches them to that release. No game data is read, made or stored here.
 name: data tool
@@ -20,10 +21,6 @@ jobs:
             name: opensky-data-windows.exe
             lib: libadpcm.dll
             sep: ";"
-          - os: macos-14
-            name: opensky-data-macos-arm64
-            lib: libadpcm.dylib
-            sep: ":"
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
