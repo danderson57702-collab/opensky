@@ -19,6 +19,7 @@ set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Wall -O2 -ftree-vectorize -mfpu=neon -mcpu=
 
 add_executable(${PROJECT_NAME}
   src/main.c
+  src/livearea.c
   src/dtree.c
   src/sktex.c
   src/skmesh.c
@@ -109,6 +110,8 @@ if(NOT EXISTS ${VITAGL_LIB})
   message(FATAL_ERROR "Build vitaGL first (see the comment above VITAGL_LIB in engine/CMakeLists.txt)")
 endif()
 
+target_compile_definitions(${PROJECT_NAME} PRIVATE TITLE_ID="${VITA_TITLEID}")
+
 target_link_libraries(${PROJECT_NAME}
   ${VITAGL_LIB} vitashark SceShaccCgExt mathneon taihen_stub SceShaccCg_stub
   SceKernelDmacMgr_stub SceCommonDialog_stub SceGxm_stub SceDisplay_stub ScePower_stub SceTouch_stub
@@ -125,4 +128,7 @@ vita_create_vpk(${PROJECT_NAME}.vpk ${VITA_TITLEID} eboot.bin
   VERSION ${VITA_VERSION}
   NAME ${VITA_APP_NAME}
   FILE sce_sys/icon0.png sce_sys/icon0.png
+  FILE sce_sys/livearea/contents/template.xml sce_sys/livearea/contents/template.xml
+  FILE sce_sys/livearea/contents/bg.png sce_sys/livearea/contents/bg.png
+  FILE sce_sys/livearea/contents/startup.png sce_sys/livearea/contents/startup.png
 )

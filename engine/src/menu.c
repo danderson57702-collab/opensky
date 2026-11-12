@@ -51,7 +51,7 @@ enum { MAIN_RESUME, MAIN_INVENTORY, MAIN_MAGIC, MAIN_SKILLS, MAIN_MAP, MAIN_QUES
 #define CONTAINER_LIST 128 // (a container's different items, as items.c holds)
 #define MENU_ROWS 10 // lines shown at once; longer lists scroll with the selection
 enum { OPT_MUSIC, OPT_VOICE, OPT_SUBTITLES, OPT_STAIRS, OPT_LOOK, OPT_INVERT, OPT_POST, OPT_FXAA, OPT_FSR, OPT_MOTION, OPT_DIFFICULTY, OPT_PERFORMANCE,
-       OPT_FRAME_RATE, OPT_RESOLUTION, OPT_DYNRES, OPT_CONTROLS, OPT_REAR_TOUCH, OPT_KEYS, OPT_COMPASS, OPT_FOV_FIRST, OPT_FOV_THIRD, OPT_CROSSHAIR, OPT_MARKERS, OPT_BAR_FADE, OPT_READOUT, OPT_MEASURE, OPT_BACK,
+       OPT_FRAME_RATE, OPT_RESOLUTION, OPT_DYNRES, OPT_CONTROLS, OPT_REAR_TOUCH, OPT_KEYS, OPT_COMPASS, OPT_FOV_FIRST, OPT_FOV_THIRD, OPT_CROSSHAIR, OPT_MARKERS, OPT_BAR_FADE, OPT_READOUT, OPT_MEASURE, OPT_LIVEAREA, OPT_BACK,
        OPT_COUNT }; // (Debug controls and the crafting kit: not here - turned on by a test run only, autotest.c)
 
 static Settings settings = {8, 10, 1, 2, 5, 0, 0, 0, 0, 2, PERF_LOW, 0, FPS_SMOOTH, RES_544_352, CONTROLS_SHOULDERS, 0, 1, 65, 65, 1, 1, 1, 0,
@@ -227,6 +227,7 @@ static const int RESOLUTIONS[RES_COUNT][2] = {{424, 240}, {480, 272}, {640, 368}
 static const char *const RESOLUTION_NAMES[RES_COUNT] = {"424 x 240", "480 x 272 (PSP)", "640 x 368", "720 x 448", "544 x 304",
                                                         "544 x 352", "640 x 352"};
 static int measure_asked;  // (Options' Measure: taken by main.c - menu_take_measure)
+static int livearea_asked; // (Options' "Use this view for the LiveArea": taken by main.c)
 static int msaa_running;   // (whether 2x MSAA was on as the graphics started: main.c - menu_set_msaa_running)
 static const char *const UPSCALER_NAMES[2] = {"Off", "Bilinear"}; // (FSR 1.0: gone - 70 ms a frame on the Vita)
 static const char *const DIFFICULTY[6] = {"Novice", "Apprentice", "Adept", "Expert", "Master", "Legendary"};
@@ -1533,6 +1534,7 @@ static void show(void) {
 	snprintf(lines[OPT_RESOLUTION], 64, "Resolution|< %s >", RESOLUTION_NAMES[settings.resolution]);
 	snprintf(lines[OPT_DYNRES], 64, "Dynamic resolution|< %s >", settings.dynres ? "On" : "Off");
 	snprintf(lines[OPT_MEASURE], 64, "Measure this place (15 s)|X");
+	snprintf(lines[OPT_LIVEAREA], 64, "Use this view for the LiveArea|X");
 	snprintf(lines[OPT_CONTROLS], 64, "Controls|< %s >", settings.controls == CONTROLS_SHOULDERS ? "Shoulders (R/L hands)"
 	                                                                                        : "Face buttons");
 	snprintf(lines[OPT_REAR_TOUCH], 64, "Rear touchpad as L / R|< %s >", settings.rear_touch ? "On" : "Off");
@@ -2493,6 +2495,11 @@ int menu_update(const SceCtrlData *pad) {
 		close_menu();
 		return MENU_PLAYING;
 	}
+	if (page == PAGE_OPTIONS && (pressed & SCE_CTRL_CROSS) && selected == OPT_LIVEAREA) { // (back to the game: its view, without the menu)
+		livearea_asked = 1;
+		close_menu();
+		return MENU_PLAYING;
+	}
 	if (page == PAGE_OPTIONS && (pressed & SCE_CTRL_CROSS) && selected == OPT_BACK)
 		back = 1;
 	if (back) {
@@ -2611,6 +2618,12 @@ int menu_is_open(void) {
 int menu_take_measure(void) {
 	const int m = measure_asked;
 	measure_asked = 0;
+	return m;
+}
+
+int menu_take_livearea(void) {
+	const int m = livearea_asked;
+	livearea_asked = 0;
 	return m;
 }
 

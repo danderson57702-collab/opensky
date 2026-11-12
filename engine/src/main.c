@@ -28,6 +28,7 @@
 #include "intro.h"
 #include "name.h"
 #include "menu.h"
+#include "livearea.h"
 #include "talk.h"
 #include "ui.h"
 #include "voice.h"
@@ -364,6 +365,8 @@ static const char *const MS_NAME[MS_COUNT] = {"everything", "without people and 
 #define MS_FRAMES 30
 static int measure_on, measure_step, measure_frame;
 static int test_measure; // (a test run's "measure")
+static int test_no_hud; // (a test run's "hud off": pictures of the scene alone)
+static int livearea_wait = -1; // (Options' "Use this view for the LiveArea": frames left until the view is taken)
 static unsigned long long measure_cpu_us, measure_gpu_us, measure_from_us;
 static float measure_ms[MS_COUNT][2]; // (each step's: the game's work, the GPU's wait)
 static int ms_skip(int what) {
@@ -1558,6 +1561,7 @@ int main(void) {
 	sceKernelChangeThreadCpuAffinityMask(sceKernelGetThreadId(), SCE_KERNEL_CPU_MASK_USER_0); // (the game on core 0: posing 1, streaming and sound 2)
 	old_names_step();
 	boot_log("starting");
+	livearea_restore(); // (a picture chosen before: back into the LiveArea after a reinstall)
 	{
 		char text[64];
 		snprintf(text, sizeof(text), "%d archives open", fileio_init(PACK_DIR));
@@ -4356,6 +4360,12 @@ int main(void) {
 					game_log("walkto: %d corners along the navmesh to %.1f %.1f%s", walkto_n, walkto_at[0], walkto_at[1],
 					         walkto_n ? "" : " (no way found: straight at it)");
 				}
+			} else if (act.kind == AT_LIVEAREA) { // ("livearea": Options' "Use this view for the LiveArea", here)
+				livearea_wait = 3;
+			} else if (act.kind == AT_HOUR) { // ("hour 6.5": the time of day)
+				lighting_set_hours((float)atof(act.arg));
+			} else if (act.kind == AT_HUD) { // ("hud off" / "hud on")
+				test_no_hud = !strcmp(act.arg, "off");
 			} else if (act.kind == AT_MEASURE) { // ("measure": Options' Measure, here)
 				test_measure = 1;
 			} else if (act.kind == AT_DEBUG) { // ("debug": Debug controls on - no longer in Options)
@@ -5371,7 +5381,13 @@ int main(void) {
 					ui_notice("Autosaved", 3.0f);
 			}
 		}
-		if (!ms_skip(MS_NO_HUD))
+		if (menu_take_livearea())
+			livearea_wait = 3; // (a few frames on: the menu gone, the scene settled)
+		if (livearea_wait >= 0 && !menu_is_open() && livearea_wait-- == 0) {
+			ui_notice(livearea_save() ? "This view is now the LiveArea picture" : "The LiveArea picture couldn't be written", 4.0f);
+			livearea_wait = -1;
+		}
+		if (!ms_skip(MS_NO_HUD) && !test_no_hud)
 			ui_draw();
 		if (shot_name[0]) { // (the picture, as the screen shows it: a PPM on the card)
 			uint8_t *px = malloc(SCREEN_W * SCREEN_H * 4);

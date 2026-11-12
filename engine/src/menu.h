@@ -99,6 +99,7 @@ void menu_open_sleep(void);
 void menu_open_load(void); // (the saves to load: the title's Continue)
 int menu_is_open(void);
 int menu_take_measure(void);        // (Options' Measure chosen: 1, once)
+int menu_take_livearea(void);       // (Options' "Use this view for the LiveArea" chosen: 1, once)
 void menu_set_msaa_running(int on); // (2x MSAA on as the graphics started)
 void menu_open_pockets(int handle, int npc, const char *name);
 // Talking to someone: what you can say; the chosen one's number once said (-2 goodbye, -1 none yet)
